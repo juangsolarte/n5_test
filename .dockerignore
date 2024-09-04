@@ -1,0 +1,27 @@
+# Ignorar archivos de configuración de entorno
+.env
+
+# Ignorar archivos de compilación
+bin/
+obj/
+
+# Ignorar archivos de configuración de usuario
+.vscode/
+.idea/
+
+# Ignorar archivos de sistema
+*.DS_Store
+*.log
+
+# Ignorar archivos de configuración de Docker
+docker-compose.yml
+Dockerfile
+
+# Ignorar archivos de configuración de Git
+.git
+.gitignore
+
+# Ignorar archivos de configuración de Node.js (si aplica)
+node_modules/
+npm-debug.log
+yarn-error.log

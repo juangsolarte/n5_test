@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  db:
+    image: mcr.microsoft.com/azure-sql-edge
+    environment:
+      SA_PASSWORD: "myStrongPass123"
+      ACCEPT_EULA: "Y"
+    ports:
+      - "1433:1433"
+    volumes:
+      - ./init-db.sql:/init-db.sql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -U sa -P myStrongPass123 -Q 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  run_init_db:
+    image: mcr.microsoft.com/mssql-tools
+    depends_on:
+      - db
+    environment:
+      SA_PASSWORD: "myStrongPass123"
+    networks:
+      - app-network
+    command: /bin/bash -c "
+      for i in {1..10}; do
+        /opt/mssql-tools/bin/sqlcmd -S db -U sa -P myStrongPass123 -d master -i /init-db.sql && break || echo 'Reintento en 10s...';
+        sleep 10;
+      done;"
+    volumes:
+      - ./init-db.sql:/init-db.sql
+
+  permissionsapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5232:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=db;Database=PERMISSION_TEST;User Id=sa;Password=myStrongPass123;TrustServerCertificate=True;
+      - ElasticSearch__Uri=http://elasticsearch:9200
+      - Kafka__BootstrapServers=kafka:9092
+    depends_on:
+      db:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    environment:
+      - discovery.type=single-node
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch_init:
+    image: appropriate/curl
+    command: curl -X PUT "http://elasticsearch:9200/permissions"
+    depends_on:
+      - elasticsearch
+    networks:
+      - app-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.0.1
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  zookeeper:
+    image: zookeeper:3.7
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  create_topic:
+    image: confluentinc/cp-kafka:7.0.1
+    depends_on:
+      - kafka
+    networks:
+      - app-network
+    entrypoint: ["/bin/sh", "-c", "kafka-topics --create --topic operations --bootstrap-server kafka:9092 --partitions 1 --replication-factor 1 || true"]
+    restart: "on-failure"
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  esdata:
